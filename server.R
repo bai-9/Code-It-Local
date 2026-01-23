@@ -681,323 +681,80 @@ server <- function(input, output, session) {
   observeEvent(input$show_negative, { show_training_example("negative") })
 
   # Calculate training metrics
-  training_metrics <- reactive({
-    req(nrow(training_values$training_results) > 0)
+  #### SECTION: TRAINING METRICS & LOGIC ####
 
-    training_data <- training_values$training_results
-
-    tp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 1)
-    fp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 0)
-    fn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 1)
-    tn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 0)
-
-    total <- tp + fp + fn + tn
-    baserate <- (tp + fp) / total
-    baserate2 <- (tp + fn) / total
-    accuracy <- (tp + tn) / total
-
-    pe <- (baserate * baserate2) + ((1 - baserate) * (1 - baserate2))
-    kappa <- if (pe < 1) (accuracy - pe) / (1 - pe) else 0
-
-    FDR <- if ((tp + fp) > 0) fp / (tp + fp) else 0
-    FOR <- if ((fn + tn) > 0) fn / (fn + tn) else 0
-    precision <- if ((tp + fp) > 0) tp / (tp + fp) else 0
-    recall <- if ((tp + fn) > 0) tp / (tp + fn) else 0
-
-    list(
-      kappa = kappa,
-      FDR = FDR,
-      FOR = FOR,
-      precision = precision,
-      recall = recall,
-      accuracy = accuracy
+  # 1. THE FIX: Reactive that re-calculates auto-coding on the fly
+  live_training_data <- reactive({
+    req(training_values$training_results)
+    # This triggers whenever keywords OR training results change
+    refresh_training_auto_coding(
+      training_values$training_results,
+      classifier_values$classifier_input
     )
   })
 
-  # Output training metrics with NULL safety
+  # 2. Centralized Stats
+  training_perf <- reactive({
+    calculate_training_performance(live_training_data())
+  })
+
+  # 3. Cleaned Metric Table
   output$training_metrics <- DT::renderDataTable({
-    metrics <- training_metrics()
+    res <- training_perf()
+    if (is.null(res)) return(datatable(data.frame(Status="Start coding!")))
 
-    if (is.null(metrics) || nrow(training_values$training_results) == 0) {
-      datatable(
-        data.frame(Message = "Start coding to see the training metrics!"),
-        rownames = FALSE,
-        colnames = NULL,
-        class = "cell-border stripe",
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      metrics_df <- data.frame(
-        Metric = c("Cohen's Kappa",
-                   paste0("False Discovery Rate (FDR) ",
-                          '<i class="fa fa-info-circle" data-toggle="tooltip" ',
-                          'data-placement="right" ',
-                          'title="Proportion of positive predictions that were incorrect. Lower is better. High FDR means your classifier is coding too many false positives."></i>'),
-                   paste0("False Omission Rate (FOR) ",
-                          '<i class="fa fa-info-circle" data-toggle="tooltip" ',
-                          'data-placement="right" ',
-                          'title="Proportion of negative predictions that were incorrect. Lower is better. High FOR means your classifier is missing true positives."></i>')
-        ),
-        Value = c(
-          round(metrics$kappa, 3),
-          round(metrics$FDR, 3),
-          round(metrics$FOR, 3)
-        ),
-        stringsAsFactors = FALSE
-      )
-
-      datatable(
-        metrics_df,
-        rownames = FALSE,
-        class = "cell-border stripe",
-        escape = FALSE,
-        options = list(
-          dom = 't',
-          ordering = FALSE,
-          initComplete = JS(
-            "function(settings, json) {",
-            "  $('[data-toggle=\"tooltip\"]').tooltip();",
-            "}"
-          ),
-          drawCallback = JS(
-            "function(settings) {",
-            "  $('[data-toggle=\"tooltip\"]').tooltip();",
-            "}"
-          )
-        )
-      )
-    }
+    metrics_df <- data.frame(
+      Metric = c("Cohen's Kappa", "False Discovery Rate (FDR)", "False Omission Rate (FOR)"),
+      Value = round(c(res$kappa, res$fdr, res$for_rate), 3)
+    )
+    datatable(metrics_df, rownames=F, options=list(dom='t'), escape=F)
   })
 
-  # Reset training metrics handler with auto-save
-  observeEvent(input$reset_training_metrics, {
-    if (nrow(training_values$training_results) > 0) {
-      showModal(modalDialog(
-        title = "Reset Training Data",
-        div(
-          div(
-            class = "alert alert-warning",
-            style = "margin-bottom: 20px;",
-            h5(icon("exclamation-triangle"), " Warning", style = "color: #856404; margin-bottom: 10px;"),
-            p("This will permanently delete all your training progress:", style = "margin-bottom: 10px;"),
-            tags$ul(
-              tags$li(paste("All", nrow(training_values$training_results), "coded training items")),
-              tags$li("Training metrics calculations"),
-              tags$li("Confusion matrix data"),
-              tags$li("Progress on examples shown")
-            )
-          ),
-          p("You will need to start training from scratch.",
-            style = "font-weight: bold; margin-bottom: 15px;"),
-          p("Are you sure you want to reset all training data?",
-            style = "color: #dc3545; font-weight: bold;")
-        ),
-        footer = tagList(
-          modalButton("Cancel"),
-          actionButton("confirm_reset_training",
-                       "Yes, Reset Training Data",
-                       class = "btn-danger",
-                       icon = icon("trash"))
-        )
-      ))
-    } else {
-      showNotification("No training data to reset.", type = "message", duration = 3)
-    }
-  })
-
-  # Confirm training reset with auto-save
-  observeEvent(input$confirm_reset_training, {
-    tryCatch({
-      # Store count for notification
-      items_cleared <- nrow(training_values$training_results)
-
-      # Reset all training data
-      training_values$training_results <- data.frame(
-        .row_id = integer(),
-        TextData = character(),
-        auto.coding = integer(),
-        user.coding = integer(),
-        stringsAsFactors = FALSE
-      )
-
-      # Reset shown indices so user can see examples again
-      training_values$shown_indices <- integer()
-
-      # Clear current sample if any
-      training_values$current_sample <- NULL
-      training_values$current_.row_id <- NULL
-      training_values$current_example_type <- NULL
-
-      # Clear suggested keywords
-      suggested_keywords$keywords <- NULL
-
-      auto_save()  # Auto-save the reset state
-
-      # Hide any visible agree/disagree buttons
-      shinyjs::hide("agree")
-      shinyjs::hide("disagree")
-
-      # Reset sample text display
-      output$sample_text <- renderUI({
-        p("Training data reset. Click 'Show Positive Example' or 'Show Negative Example' to start training again.",
-          style = "color: #6c757d; font-style: italic; text-align: center; margin: 20px 0;")
-      })
-
-      removeModal()
-
-      showNotification(
-        paste("Training data reset successfully! Cleared", items_cleared, "training items."),
-        type = "message", duration = 5
-      )
-
-    }, error = function(e) {
-      showNotification(paste("Error resetting training data:", e$message), type = "error")
-      removeModal()
-    })
-  })
-
-  # Output confusion matrix
+  # 4. Cleaned Confusion Matrix
   output$confusion_matrix_table <- DT::renderDataTable({
-    if (nrow(training_values$training_results) == 0) {
-      datatable(
-        data.frame(Message = "Start coding to see the confusion matrix!"),
-        rownames = FALSE,
-        colnames = NULL,
-        class = "cell-border stripe",
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      training_data <- training_values$training_results
+    res <- training_perf()
+    req(res)
+    conf_df <- data.frame(
+      ` ` = c("System YES", "System NO"),
+      `User YES` = c(res$tp, res$fn),
+      `User NO` = c(res$fp, res$tn),
+      check.names = FALSE
+    )
+    datatable(conf_df, rownames=F, options=list(dom='t'))
+  })
 
-      tp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 1)
-      fp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 0)
-      fn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 1)
-      tn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 0)
-
-      confusion_df <- data.frame(
-        ` ` = c("Classifier said YES", "Classifier said NO"),
-        `You said YES` = c(tp, fn),
-        `You said NO` = c(fp, tn),
-        stringsAsFactors = FALSE,
-        check.names = FALSE
-      )
-
-      datatable(
-        confusion_df,
-        rownames = FALSE,
-        class = "cell-border stripe",
-        options = list(
-          dom = 't',
-          ordering = FALSE,
-          columnDefs = list(
-            list(className = 'dt-left', targets = 0),
-            list(className = 'dt-center', targets = 1:2)
-          )
-        )
-      )
-    }
+  # 5. Massive Line Reduction: Consolidate Reset
+  observeEvent(input$confirm_reset_training, {
+    training_values$training_results <- training_values$training_results[0, ] # Keep structure
+    training_values$shown_indices <- integer(0)
+    training_values$current_sample <- NULL
+    removeModal()
+    auto_save()
+    showNotification("Training reset.")
   })
 
   # Download handler
+  #### SECTION: EXPORT HANDLERS ####
+
+  # Helper to generate filenames consistently
+  export_filename <- function(suffix) {
+    code <- if (!is.null(current_code())) current_code() else "training"
+    paste0(code, "_", suffix, "_", Sys.Date(), ".csv")
+  }
+
+  # 1. Download Training Results
   output$download_training_data <- downloadHandler(
-    filename = function() {
-      code_name <- if (!is.null(current_code())) current_code() else "training"
-      paste0(code_name, "_training_results_", Sys.Date(), ".csv")
-    },
+    filename = function() { export_filename("results") },
     content = function(file) {
-      if (nrow(training_values$training_results) == 0) {
-        write.csv(
-          data.frame(Message = "No training data available yet."),
-          file, row.names = FALSE
-        )
-      } else {
-        training_data <- training_values$training_results
-        metrics <- training_metrics()
-
-        export_data <- training_data
-        export_data$Agreement <- ifelse(
-          export_data$auto.coding == export_data$user.coding,
-          "Agreement", "Disagreement"
-        )
-        export_data$Classification_Type <- dplyr::case_when(
-          export_data$auto.coding == 1 & export_data$user.coding == 1 ~ "True Positive",
-          export_data$auto.coding == 1 & export_data$user.coding == 0 ~ "False Positive",
-          export_data$auto.coding == 0 & export_data$user.coding == 1 ~ "False Negative",
-          export_data$auto.coding == 0 & export_data$user.coding == 0 ~ "True Negative"
-        )
-
-        write.csv(export_data, file, row.names = FALSE)
-      }
+      write.csv(prepare_export_data(live_training_data()), file, row.names = FALSE)
     }
   )
 
-  # Download training metrics handler
+  # 2. Download Training Metrics
   output$download_training_metrics <- downloadHandler(
-    filename = function() {
-      code_name <- if (!is.null(current_code())) current_code() else "training"
-      paste0(code_name, "_training_metrics_", Sys.Date(), ".csv")
-    },
+    filename = function() { export_filename("metrics") },
     content = function(file) {
-      if (nrow(training_values$training_results) == 0) {
-        write.csv(
-          data.frame(Message = "No training data available yet."),
-          file, row.names = FALSE
-        )
-      } else {
-        # Calculate metrics and confusion matrix
-        metrics <- training_metrics()
-        training_data <- training_values$training_results
-
-        # Calculate confusion matrix values
-        tp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 1)
-        fp <- sum(training_data$auto.coding == 1 & training_data$user.coding == 0)
-        fn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 1)
-        tn <- sum(training_data$auto.coding == 0 & training_data$user.coding == 0)
-
-        # Create comprehensive metrics export
-        metrics_export <- data.frame(
-          Metric_Category = c(
-            "Performance Metrics", "Performance Metrics", "Performance Metrics",
-            "Performance Metrics", "Performance Metrics", "Performance Metrics",
-            "Confusion Matrix", "Confusion Matrix", "Confusion Matrix", "Confusion Matrix",
-            "Summary Statistics", "Summary Statistics"
-          ),
-          Metric_Name = c(
-            "Cohen's Kappa", "False Discovery Rate (FDR)", "False Omission Rate (FOR)",
-            "Precision", "Recall", "Accuracy",
-            "True Positives", "False Positives", "False Negatives", "True Negatives",
-            "Total Coded Items", "Agreement Rate"
-          ),
-          Value = c(
-            round(metrics$kappa, 4),
-            round(metrics$FDR, 4),
-            round(metrics$FOR, 4),
-            round(metrics$precision, 4),
-            round(metrics$recall, 4),
-            round(metrics$accuracy, 4),
-            tp, fp, fn, tn,
-            nrow(training_data),
-            round(sum(training_data$auto.coding == training_data$user.coding) / nrow(training_data), 4)
-          ),
-          Description = c(
-            "Inter-rater reliability measure",
-            "Proportion of positive predictions that were wrong",
-            "Proportion of negative predictions that were wrong",
-            "Proportion of positive predictions that were correct",
-            "Proportion of actual positives correctly identified",
-            "Overall proportion of correct predictions",
-            "Classifier=YES, You=YES",
-            "Classifier=YES, You=NO",
-            "Classifier=NO, You=YES",
-            "Classifier=NO, You=NO",
-            "Total number of items coded",
-            "Proportion of items where you agreed with classifier"
-          ),
-          stringsAsFactors = FALSE
-        )
-
-        write.csv(metrics_export, file, row.names = FALSE)
-      }
+      write.csv(prepare_metrics_report(training_perf()), file, row.names = FALSE)
     }
   )
 
