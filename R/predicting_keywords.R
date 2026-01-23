@@ -281,3 +281,47 @@ predict_new_text <- function(model_object, new_text_vector) {
   # prediction <- predict(model, new_df)
   # return(prediction)
 }
+
+# utils.R
+
+#' Process Naive Bayes results and filter out existing keywords
+#' Enhanced filtering for suggestions
+#' @param model_results Output from the NB model
+#' @param existing_df The current classifier_input
+#' @param blacklist Vector of strings the user has "trashed"
+get_filtered_suggestions <- function(model_results, existing_df, blacklist) {
+  if (is.null(model_results$positive_tokens)) return(NULL)
+
+  # 1. Clean existing keywords
+  existing <- existing_df$Keywords %>%
+    lapply(function(x) trimws(strsplit(x, ",")[[1]])) %>%
+    unlist() %>% tolower() %>% unique()
+
+  # 2. Filter out Existing + Blacklist
+  suggestions <- model_results$positive_tokens %>%
+    mutate(token_lower = tolower(token)) %>%
+    filter(!token_lower %in% existing) %>%
+    filter(!token_lower %in% blacklist) %>%
+    head(10)
+
+  if (nrow(suggestions) == 0) return(NULL)
+
+  # 3. Add the Trash Button Column
+  suggestions$Remove <- sprintf(
+    '<button class="btn btn-default btn-xs" onclick="trashSuggestion(\'%s\')" style="color: #dc3545;"><i class="fa fa-trash"></i></button>',
+    suggestions$token
+  )
+
+  return(suggestions %>% select(Keyword = token, `Ratio` = predictive_ratio, Remove))
+}
+# utils.R
+
+#' Get a flat vector of all unique keywords currently in the classifier
+get_current_keyword_list <- function(classifier_df) {
+  if (nrow(classifier_df) == 0) return(character(0))
+
+  classifier_df$Keywords %>%
+    lapply(function(x) trimws(strsplit(x, ",")[[1]])) %>%
+    unlist() %>%
+    unique()
+}

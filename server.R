@@ -1,281 +1,24 @@
 ##### SERVER #####
+# In server.R
+
 server <- function(input, output, session) {
+  # 1. Essential Config
+  options(shiny.maxRequestSize = 200 * 1024^2)
 
-  options(shiny.maxRequestSize = 200 * 1024^2) # Sets limit to 200MB
+  # 2. Set Local Identity
+  # This replaces the entire "auth_values" block
+  user_name <- Sys.info()[["user"]]
+  user_path <- user_data_dir(user_name, base_dir)
 
-  ##### AUTHENTICATION STATE MANAGEMENT #####
-
-  # Define user data directory function
-  user_data_dir <- function() {
-    req(current_user())
-
-    # Create base directory if it doesn't exist
-    if (!dir.exists(base_dir)) {
-      dir.create(base_dir, recursive = TRUE, showWarnings = FALSE)
-    }
-
-    # User-specific directory
-    user_dir <- file.path(base_dir, current_user())
-
-    # Create user directory if it doesn't exist
-    if (!dir.exists(user_dir)) {
-      dir.create(user_dir, recursive = TRUE, showWarnings = FALSE)
-    }
-
-    return(user_dir)
-  }
-
-  # Authentication reactive values
-  auth_values <- reactiveValues(
-    authenticated = ifelse(exists("authenticate_cognito_user"), FALSE, TRUE), # Default to TRUE for local app
-    user_info = if(exists("authenticate_cognito_user")) NULL else list(username = "local_user"), # Default user for local app 
-    access_token = NULL,
-    pending_username = NULL
-  )
-
-  # Control authentication display
-  output$authenticated <- reactive({
-    auth_values$authenticated
-  })
+  # Satisfy any remaining UI output$authenticated checks
+  output$authenticated <- reactive({ TRUE })
   outputOptions(output, "authenticated", suspendWhenHidden = FALSE)
-
-  # Get current user
-  current_user <- reactive({
-    req(auth_values$user_info)
-    auth_values$user_info$username
-  })
-
-  ##### AUTHENTICATION HANDLERS #####
-
-  # Login handler
-  observeEvent(input$login_submit, {
-    req(input$login_username, input$login_password)
-
-    if (nchar(trimws(input$login_username)) == 0 || nchar(trimws(input$login_password)) == 0) {
-      output$login_message <- renderUI({
-        div(class = "alert alert-danger", "Please enter both username and password")
-      })
-      return()
-    }
-
-    result <- authenticate_cognito_user(input$login_username, input$login_password)
-
-    if (result$success) {
-      auth_values$authenticated <- TRUE
-      auth_values$user_info <- list(username = result$user)
-      auth_values$access_token <- result$tokens$AccessToken
-
-      # Clear login form
-      updateTextInput(session, "login_username", value = "")
-      updateTextInput(session, "login_password", value = "")
-
-      showNotification("Login successful!", type = "message", duration = 3)
-
-    } else {
-      output$login_message <- renderUI({
-        div(class = "alert alert-danger", result$message)
-      })
-    }
-  })
-
-  # Registration handler
-  observeEvent(input$register_submit, {
-    req(input$register_username, input$register_email, input$register_password, input$register_confirm)
-
-    # Validation
-    if (nchar(trimws(input$register_username)) == 0 || nchar(trimws(input$register_email)) == 0 ||
-        nchar(trimws(input$register_password)) == 0 || nchar(trimws(input$register_confirm)) == 0) {
-      output$register_message <- renderUI({
-        div(class = "alert alert-danger", "Please fill in all fields")
-      })
-      return()
-    }
-
-    if (input$register_password != input$register_confirm) {
-      output$register_message <- renderUI({
-        div(class = "alert alert-danger", "Passwords do not match")
-      })
-      return()
-    }
-
-    password <- input$register_password
-    validation_errors <- character(0)
-
-    if (nchar(password) < 8) {
-      validation_errors <- c(validation_errors, "Must be at least 8 characters long.")
-    }
-    if (!grepl("[0-9]", password)) {
-      validation_errors <- c(validation_errors, "Must contain at least 1 number.")
-    }
-    if (!grepl("[^A-Za-z0-9]", password)) {
-      validation_errors <- c(validation_errors, "Must contain at least 1 special character.")
-    }
-    if (!grepl("[A-Z]", password)) {
-      validation_errors <- c(validation_errors, "Must contain at least 1 uppercase letter.")
-    }
-    if (!grepl("[a-z]", password)) {
-      validation_errors <- c(validation_errors, "Must contain at least 1 lowercase letter.")
-    }
-
-    if (length(validation_errors) > 0) {
-      # Show error notification and STOP execution
-      showNotification(
-        paste("Password does not meet requirements:", paste(validation_errors, collapse = " ")),
-        type = "error",
-        duration = 10
-      )
-      return() # Stops the code from running register_cognito_user
-    }
-
-    result <- register_cognito_user(input$register_username, input$register_password, input$register_email)
-
-    if (result$success) {
-      # Store username for confirmation
-      auth_values$pending_username <- input$register_username
-
-      # Clear form
-      updateTextInput(session, "register_username", value = "")
-      updateTextInput(session, "register_email", value = "")
-      updateTextInput(session, "register_password", value = "")
-      updateTextInput(session, "register_confirm", value = "")
-
-      # Show confirmation view
-      runjs("showView('confirm-view')")
-
-      output$confirm_message <- renderUI({
-        div(class = "alert alert-success", result$message)
-      })
-
-    } else {
-      output$register_message <- renderUI({
-        div(class = "alert alert-danger", result$message)
-      })
-    }
-  })
-
-  # Email confirmation handler
-  observeEvent(input$confirm_submit, {
-    req(input$confirm_code, auth_values$pending_username)
-
-    result <- confirm_cognito_user(auth_values$pending_username, input$confirm_code)
-
-    if (result$success) {
-      output$confirm_message <- renderUI({
-        div(class = "alert alert-success", result$message)
-      })
-
-      # Clear form and redirect to login
-      updateTextInput(session, "confirm_code", value = "")
-      session$userData$pending_username <- NULL
-
-      shinyjs::delay(2000, runjs("showView('login-view')"))
-
-    } else {
-      showNotification(
-        paste("Verification Failed:", result$message),
-        type = "error",
-        duration = 8
-      )
-      output$confirm_message <- renderUI({
-        div(class = "alert alert-danger", result$message)
-      })
-    }
-  })
-
-  # Forgot password step 1
-  observeEvent(input$forgot_submit, {
-    req(input$forgot_username)
-
-    result <- forgot_password_cognito(input$forgot_username)
-
-    if (result$success) {
-      session$userData$reset_username <- input$forgot_username
-
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-success", result$message)
-      })
-
-      # Show step 2
-      shinyjs::hide("forgot-step1")
-      shinyjs::show("forgot-step2")
-
-    } else {
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-danger", result$message)
-      })
-    }
-  })
-
-  # Password reset step 2
-  observeEvent(input$reset_submit, {
-    req(input$reset_code, input$new_password, input$confirm_new_password, session$userData$reset_username)
-
-    if (input$new_password != input$confirm_new_password) {
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-danger", "Passwords do not match")
-      })
-      return()
-    }
-
-    if (nchar(input$new_password) < 8) {
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-danger", "Password must be at least 8 characters")
-      })
-      return()
-    }
-
-    result <- confirm_forgot_password_cognito(session$userData$reset_username, input$reset_code, input$new_password)
-
-    if (result$success) {
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-success", result$message)
-      })
-
-      # Clear form and redirect to login
-      updateTextInput(session, "reset_code", value = "")
-      updateTextInput(session, "new_password", value = "")
-      updateTextInput(session, "confirm_new_password", value = "")
-      session$userData$reset_username <- NULL
-
-      shinyjs::delay(2000, runjs("showView('login-view')"))
-
-    } else {
-      output$forgot_message <- renderUI({
-        div(class = "alert alert-danger", result$message)
-      })
-    }
-  })
-
-  # Logout handler
-  observeEvent(input$logout_clicked, {
-    # Save all user data before logout
-    if (auth_values$authenticated) {
-      save_all_user_data()
-    }
-
-    # Clear authentication state
-    auth_values$authenticated <- FALSE
-    auth_values$user_info <- NULL
-    auth_values$access_token <- NULL
-
-    # Clear any messages
-    output$login_message <- renderUI({ NULL })
-    output$register_message <- renderUI({ NULL })
-    output$confirm_message <- renderUI({ NULL })
-    output$forgot_message <- renderUI({ NULL })
-
-    # Reset views
-    shinyjs::show("forgot-step1")
-    shinyjs::hide("forgot-step2")
-    runjs("showView('login-view')")
-
-    showNotification("Logged out successfully", type = "message", duration = 3)
-  })
 
   ##### INITIALIZE ALL REACTIVE VALUES ####
 
   # Create Codebook values
   values <- reactiveValues(
+    path = user_path,
     codebook_input = data.frame(
       CodeName = c("Click to enter Code Name"),
       CodeDefinition = c("Click to enter Code Definition"),
@@ -283,7 +26,6 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
   )
-
   # Create Classifier values
   classifier_values <- reactiveValues(
     classifier_input = data.frame(
@@ -291,7 +33,7 @@ server <- function(input, output, session) {
       stringsAsFactors = FALSE
     )
   )
-
+  values$keyword_blacklist <- c()
   # Coded data values to store coded data
   coded_data_values <- reactiveValues(
     coded_data = NULL
@@ -349,186 +91,61 @@ server <- function(input, output, session) {
 
   ##### USER DATA PERSISTENCE FUNCTIONS #####
 
-  # Save all user data
   save_all_user_data <- function() {
-    if (is.null(current_user())) return()
-
-    tryCatch({
-      user_dir <- user_data_dir()
-
-      # Save dataset and text column if they exist
-      if (!is.null(session_values$saved_dataset)) {
-        saveRDS(session_values$saved_dataset, file.path(user_dir, "dataset.rds"))
-      }
-      if (!is.null(session_values$saved_text_column)) {
-        saveRDS(session_values$saved_text_column, file.path(user_dir, "text_column.rds"))
-      }
-
-      # Save codebook
-      saveRDS(values$codebook_input, file.path(user_dir, "codebook.rds"))
-
-      # Save classifiers
-      saveRDS(classifier_values$classifier_input, file.path(user_dir, "classifiers.rds"))
-
-      # Save coded data if it exists
-      if (!is.null(coded_data_values$coded_data)) {
-        saveRDS(coded_data_values$coded_data, file.path(user_dir, "coded_data.rds"))
-      }
-
-      # Save training data
-      training_data <- list(
-        training_results = training_values$training_results,
-        shown_indices = training_values$shown_indices
-      )
-      saveRDS(training_data, file.path(user_dir, "training_data.rds"))
-
-      # Save validation data
-      validation_data <- list(
-        validation_pool = validation_values$validation_pool,
-        current_cycle_results = validation_values$current_cycle_results,
-        all_validation_results = validation_values$all_validation_results,
-        cais_n = validation_values$cais_n,
-        current_cycle = validation_values$current_cycle,
-        perfect_agreements_current_cycle = validation_values$perfect_agreements_current_cycle,
-        validation_complete = validation_values$validation_complete,
-        cycle_failed = validation_values$cycle_failed,
-        total_items_coded = validation_values$total_items_coded,
-        estimated_baserate = validation_values$estimated_baserate,
-        adjusted_baserate = validation_values$adjusted_baserate,
-        a_max = validation_values$a_max
-      )
-      saveRDS(validation_data, file.path(user_dir, "validation_data.rds"))
-
-      # Save current tab
-      saveRDS(input$tabs, file.path(user_dir, "current_tab.rds"))
-
-      cat("User data saved successfully for user:", current_user(), "\n")
-
-    }, error = function(e) {
-      cat("Error saving user data:", e$message, "\n")
-    })
+    success <- save_persistence_data(
+      user_name, base_dir, input$tabs,
+      session_values, values, classifier_values,
+      coded_data_values, training_values, validation_values
+    )
+    if (success) cat("Data saved for:", user_name, "\n")
   }
 
-  # Load all user data
   load_all_user_data <- function() {
-    if (is.null(current_user()) || session_values$data_loaded) return()
+    if (is.null(user_name) || session_values$data_loaded) return()
 
-    tryCatch({
-      user_dir <- user_data_dir()
+    data <- load_persistence_data(user_name, base_dir)
+    if (length(data) == 0) return()
 
-      # Load dataset and text column
-      dataset_file <- file.path(user_dir, "dataset.rds")
-      text_column_file <- file.path(user_dir, "text_column.rds")
+    # Unpack basic objects
+    if (!is.null(data$dataset))     session_values$saved_dataset <- data$dataset
+    if (!is.null(data$codebook))    values$codebook_input <- data$codebook
+    if (!is.null(data$classifiers)) classifier_values$classifier_input <- data$classifiers
+    if (!is.null(data$coded_data))  coded_data_values$coded_data <- data$coded_data
 
-      if (file.exists(dataset_file)) {
-        session_values$saved_dataset <- readRDS(dataset_file)
-        cat("Dataset loaded for user:", current_user(), "\n")
-      }
+    # Unpack complex lists
+    if (!is.null(data$training_data)) {
+      training_values$training_results <- data$training_data$training_results
+      training_values$shown_indices    <- data$training_data$shown_indices
+    }
 
-      if (file.exists(text_column_file)) {
-        session_values$saved_text_column <- readRDS(text_column_file)
-        # Update the text column selection in UI
-        if (!is.null(session_values$saved_dataset)) {
-          choices <- names(session_values$saved_dataset)
-          updateSelectInput(session, "textColumn",
-                            choices = choices,
-                            selected = session_values$saved_text_column)
-        }
-        cat("Text column loaded for user:", current_user(), "\n")
-      }
+    if (!is.null(data$validation_data)) {
+      v <- data$validation_data
+      for (name in names(v)) validation_values[[name]] <- v[[name]]
+    }
 
-      # Load codebook
-      codebook_file <- file.path(user_dir, "codebook.rds")
-      if (file.exists(codebook_file)) {
-        values$codebook_input <- readRDS(codebook_file)
-        cat("Codebook loaded for user:", current_user(), "\n")
-      }
+    # UI Updates
+    if (!is.null(data$text_column)) {
+      session_values$saved_text_column <- data$text_column
+      updateSelectInput(session, "textColumn",
+                        choices = names(session_values$saved_dataset),
+                        selected = data$text_column)
+    }
 
-      # Load classifiers
-      classifiers_file <- file.path(user_dir, "classifiers.rds")
-      if (file.exists(classifiers_file)) {
-        classifier_values$classifier_input <- readRDS(classifiers_file)
-        cat("Classifiers loaded for user:", current_user(), "\n")
-      }
+    if (!is.null(data$current_tab)) {
+      shinyjs::delay(500, updateNavbarPage(session, "tabs", selected = data$current_tab))
+    }
 
-      # Load coded data
-      coded_data_file <- file.path(user_dir, "coded_data.rds")
-      if (file.exists(coded_data_file)) {
-        coded_data_values$coded_data <- readRDS(coded_data_file)
-        cat("Coded data loaded for user:", current_user(), "\n")
-      }
-
-      # Load training data
-      training_file <- file.path(user_dir, "training_data.rds")
-      if (file.exists(training_file)) {
-        training_data <- readRDS(training_file)
-        training_values$training_results <- training_data$training_results
-        training_values$shown_indices <- training_data$shown_indices
-        cat("Training data loaded for user:", current_user(), "\n")
-      }
-
-      # Load validation data
-      validation_file <- file.path(user_dir, "validation_data.rds")
-      if (file.exists(validation_file)) {
-        validation_data <- readRDS(validation_file)
-        validation_values$validation_pool <- validation_data$validation_pool
-        validation_values$current_cycle_results <- validation_data$current_cycle_results
-        validation_values$all_validation_results <- validation_data$all_validation_results
-        validation_values$cais_n <- validation_data$cais_n
-        validation_values$current_cycle <- validation_data$current_cycle
-        validation_values$perfect_agreements_current_cycle <- validation_data$perfect_agreements_current_cycle
-        validation_values$validation_complete <- validation_data$validation_complete
-        validation_values$cycle_failed <- validation_data$cycle_failed
-        validation_values$total_items_coded <- validation_data$total_items_coded
-        validation_values$estimated_baserate <- validation_data$estimated_baserate
-        validation_values$adjusted_baserate <- validation_data$adjusted_baserate
-        validation_values$a_max <- validation_data$a_max
-        cat("Validation data loaded for user:", current_user(), "\n")
-      }
-
-      # Load and restore current tab
-      tab_file <- file.path(user_dir, "current_tab.rds")
-      if (file.exists(tab_file)) {
-        saved_tab <- readRDS(tab_file)
-        session_values$current_tab <- saved_tab
-
-        # Navigate to saved tab after a short delay
-        shinyjs::delay(500, {
-          updateNavbarPage(session, "tabs", selected = saved_tab)
-        })
-
-        cat("Tab state restored for user:", current_user(), "- Tab:", saved_tab, "\n")
-      }
-
-      session_values$data_loaded <- TRUE
-
-      # Show success message
-      showNotification(
-        "Welcome back! Your previous session has been restored.",
-        type = "message", duration = 5
-      )
-
-    }, error = function(e) {
-      cat("Error loading user data:", e$message, "\n")
-      showNotification(
-        "Error restoring previous session. Starting fresh.",
-        type = "warning", duration = 3
-      )
-    })
+    session_values$data_loaded <- TRUE
+    showNotification("Session restored.", type = "message")
   }
 
-  # Auto-save function (called whenever important data changes)
   auto_save <- function() {
-    req(current_user())
-
-    if (!is.null(current_user()) && session_values$data_loaded) {
-      save_all_user_data()
-    }
+    if (!is.null(user_name) && session_values$data_loaded) save_all_user_data()
   }
 
   # Load user data when authentication succeeds
   observe({
-    req(current_user())
+    #req(current_user())
     if (!session_values$data_loaded) {
       shinyjs::delay(1000, {  # Small delay to ensure UI is ready
         load_all_user_data()
@@ -580,22 +197,6 @@ server <- function(input, output, session) {
       # Clear dataset
       session_values$saved_dataset <- NULL
       session_values$saved_text_column <- NULL
-
-      # Clear codebook
-      # commented out for now -- user may want to keep code and codebook even after uploading new dataset
-      # values$codebook_input <- data.frame(
-      #   CodeName = c("Click to enter Code Name"),
-      #   CodeDefinition = c("Click to enter Code Definition"),
-      #   Examples = c("Click to enter Code Examples"),
-      #   stringsAsFactors = FALSE
-      # )
-
-      # Clear classifiers
-      # commented out for now -- user may want to keep classifier list even after uploading new dataset
-      # classifier_values$classifier_input <- data.frame(
-      #   Keywords = character(),
-      #   stringsAsFactors = FALSE
-      # )
 
       # Clear training data
       training_values$training_results <- data.frame(
@@ -721,43 +322,7 @@ server <- function(input, output, session) {
 
   # Render the editable single-row table
   output$created_codebook <- DT::renderDataTable({
-    datatable(
-      values$codebook_input,
-      rownames = FALSE,
-      class = "cell-border stripe compact",
-      editable = list(target = 'cell', disable = list(columns = NULL)),
-      options = list(
-        dom = 't',
-        ordering = FALSE,
-        scrollX = TRUE,
-        columnDefs = list(
-          list(className = 'dt-left', targets = '_all'),
-          list(width = '200px', targets = 0),
-          list(width = '300px', targets = 1),
-          list(width = '300px', targets = 2)
-        ),
-        initComplete = JS(
-          "function(settings, json) {",
-          "  $(this.api().table().container()).find('input').css({",
-          "    'background-color': '#ffffff',",
-          "    'color': '#000000',",
-          "    'border': '2px solid #007bff'",
-          "  });",
-          "}"
-        )
-      ),
-      callback = JS(
-        "table.on('click', 'td', function() {",
-        "  setTimeout(function() {",
-        "    $('input').css({",
-        "      'background-color': '#ffffff !important',",
-        "      'color': '#000000 !important',",
-        "      'border': '2px solid #007bff !important'",
-        "    });",
-        "  }, 100);",
-        "});"
-      )
-    )
+    render_codebook_dt(values$codebook_input)
   })
 
   # Update codebook when cell is edited and auto-save
@@ -797,107 +362,36 @@ server <- function(input, output, session) {
   ##### CREATE CLASSIFIERS ####
 
   # Apply coding function
+
   apply_coding <- function() {
-    if (!is.null(dataset()) &&
-        !is.null(input$textColumn) &&
-        input$textColumn != "" &&
-        !is.null(current_code()) &&
-        nrow(classifier_values$classifier_input) > 0) {
-
-      tryCatch({
-        data <- dataset()
-        text_col <- input$textColumn
-        code_name <- current_code()
-        new_col_name <- paste0(code_name, ".Positive")
-
-        # Get all keywords (regex supported)
-        all_keywords <- classifier_values$classifier_input %>%
-          rowwise() %>%
-          do({
-            keywords <- trimws(strsplit(.$Keywords, ",")[[1]])
-
-            # drop empty strings explicitly
-            keywords <- keywords[keywords != ""]
-
-            data.frame(
-              Keyword = keywords,
-              stringsAsFactors = FALSE
-            )
-          }) %>%
-          ungroup() %>%
-          pull(Keyword)
-
-        # stop if nothing valid remains
-        if (length(all_keywords) == 0) {
-          coded_data_values$coded_data <- NULL
-          return()
-        }
-
-        # prevent accidental empty OR groups. This avoids patterns like (word1||word2)
-        all_keywords <- all_keywords[!is.na(all_keywords) & nzchar(all_keywords)]
-
-        if (length(all_keywords) == 0) {
-          coded_data_values$coded_data <- NULL
-          return()
-        }
-
-        # Combine all keywords with OR operator
-        regex_pattern <- paste0("(", paste(all_keywords, collapse = "|"), ")")
-
-        # Test the regex pattern to catch syntax errors
-        test_result <- tryCatch({
-          grepl(regex_pattern, "test", ignore.case = TRUE)
-          TRUE
-        }, error = function(e) {
-          showNotification(
-            paste(
-              "Invalid regex pattern:",
-              e$message,
-              "- Check your keyword syntax"
-            ),
-            type = "error",
-            duration = 5
-          )
-          FALSE
-        })
-
-        if (!test_result) {
-          coded_data_values$coded_data <- NULL
-          return()
-        }
-
-        # Apply the regex pattern
-        matches <- grepl(
-          regex_pattern,
-          data[[text_col]],
-          ignore.case = TRUE
-        )
-
-        # Create coded dataframe
-        coded_df <- data.frame(
-          TextData = data[[text_col]],
-          stringsAsFactors = FALSE
-        )
-        coded_df[[new_col_name]] <- as.integer(matches)
-
-        coded_data_values$coded_data <- coded_df
-        auto_save()
-        showNotification(
-          "Coding updated with regex support!",
-          type = "message",
-          duration = 2
-        )
-
-      }, error = function(e) {
-        showNotification(
-          paste("Error applying coding:", e$message),
-          type = "error"
-        )
-        coded_data_values$coded_data <- NULL
-      })
-    } else {
+    # Essential guard clauses
+    req(dataset(), input$textColumn, current_code())
+    if (nrow(classifier_values$classifier_input) == 0) {
       coded_data_values$coded_data <- NULL
+      return()
     }
+
+    tryCatch({
+      # Call the utility function
+      result_df <- execute_regex_coding(
+        data = dataset(),
+        text_col = input$textColumn,
+        code_name = current_code(),
+        classifier_df = classifier_values$classifier_input
+      )
+
+      # Update values and UI
+      coded_data_values$coded_data <- result_df
+
+      if (!is.null(result_df)) {
+        auto_save()
+        showNotification("Coding updated with regex support!", type = "message", duration = 2)
+      }
+
+    }, error = function(e) {
+      showNotification(e$message, type = "error", duration = 5)
+      coded_data_values$coded_data <- NULL
+    })
   }
 
   # Trigger coding updates
@@ -934,181 +428,50 @@ server <- function(input, output, session) {
 })
 
   # Handle individual keyword deletion
+  #### SECTION: KEYWORD DELETION ####
+
+  # 1. Trigger Modal
   observeEvent(input$delete_individual_keyword, {
-    delete_info <- input$delete_individual_keyword
+    info <- input$delete_individual_keyword
+    req(info$group_id, info$keyword_index)
 
-    if (!is.null(delete_info) && !is.null(delete_info$group_id) && !is.null(delete_info$keyword_index)) {
-      group_id <- delete_info$group_id
-      keyword_index <- delete_info$keyword_index
+    # Find the keyword text for the modal
+    row_text <- classifier_values$classifier_input$Keywords[info$group_id]
+    keywords <- trimws(strsplit(row_text, ",")[[1]])
+    target_keyword <- keywords[info$keyword_index]
 
-      if (group_id > 0 && group_id <= nrow(classifier_values$classifier_input)) {
-        # Get current keywords for this group
-        current_keywords_string <- classifier_values$classifier_input$Keywords[group_id]
-        keywords_list <- trimws(strsplit(current_keywords_string, ",")[[1]])
-        keywords_list <- keywords_list[keywords_list != ""]
+    # Store info and show modal
+    session$userData$delete_info <- list(
+      group_id = info$group_id,
+      keyword_index = info$keyword_index,
+      keyword_text = target_keyword
+    )
 
-        if (keyword_index > 0 && keyword_index <= length(keywords_list)) {
-          keyword_to_delete <- keywords_list[keyword_index]
-
-          showModal(modalDialog(
-            title = "Confirm Keyword Deletion",
-            p("Are you sure you want to delete this keyword?"),
-            div(
-              style = "background-color: #f8d7da; padding: 15px; border-radius: 5px; margin: 15px 0; border: 1px solid #f5c6cb; text-align: center;",
-              h5(keyword_to_delete, style = "color: #721c24; font-family: 'Courier New', monospace; margin: 0;")
-            ),
-            p("This action cannot be undone.", style = "color: #dc3545; font-size: 13px;"),
-            br(),
-            fluidRow(
-              column(6,
-                     modalButton("Cancel")
-              ),
-              column(6,
-                     actionButton("confirm_delete_keyword",
-                                  "Delete Keyword",
-                                  class = "btn-danger btn-block")
-              )
-            )
-          ))
-
-          # Store deletion info for confirmation
-          session$userData$delete_info <- list(
-            group_id = group_id,
-            keyword_index = keyword_index,
-            keyword_to_delete = keyword_to_delete
-          )
-        }
-      }
-    }
+    showModal(keyword_delete_modal(target_keyword))
   })
-  # Confirm individual keyword deletion and auto-save
+
+  # 2. Process Confirmation
   observeEvent(input$confirm_delete_keyword, {
-    delete_info <- session$userData$delete_info
+    req(session$userData$delete_info)
+    info <- session$userData$delete_info
 
-    tryCatch({
-      if (!is.null(delete_info)) {
-        group_id <- delete_info$group_id
-        keyword_index <- delete_info$keyword_index
+    classifier_values$classifier_input <- remove_keyword_logic(
+      classifier_values$classifier_input,
+      info$group_id,
+      info$keyword_index
+    )
 
-        # Get current keywords for this group
-        current_keywords_string <- classifier_values$classifier_input$Keywords[group_id]
-        keywords_list <- trimws(strsplit(current_keywords_string, ",")[[1]])
-        keywords_list <- keywords_list[keywords_list != ""]
-
-        # Remove the specific keyword
-        keywords_list <- keywords_list[-keyword_index]
-
-        if (length(keywords_list) > 0) {
-          # Update the keywords string for this group
-          new_keywords_string <- paste(keywords_list, collapse = ", ")
-          classifier_values$classifier_input$Keywords[group_id] <- new_keywords_string
-
-          showNotification(
-            paste("Deleted keyword:", delete_info$keyword_to_delete),
-            type = "message", duration = 3
-          )
-        } else {
-          # If no keywords left, remove the entire row
-          classifier_values$classifier_input <- classifier_values$classifier_input[-group_id, , drop = FALSE]
-
-          showNotification(
-            paste("Deleted keyword:", delete_info$keyword_to_delete, "and removed empty group"),
-            type = "message", duration = 3
-          )
-        }
-
-        auto_save()  # Auto-save when classifiers change
-
-        # Clear stored info
-        session$userData$delete_info <- NULL
-      }
-      removeModal()
-    }, error = function(e) {
-      showNotification(paste("Error deleting keyword:", e$message), type = "error")
-      removeModal()
-    })
+    removeModal()
+    auto_save()
+    showNotification(paste("Deleted:", info$keyword_text), type = "message")
   })
 
   output$classifier_list <- DT::renderDataTable({
-    # Force reactive dependency on classifier_values$classifier_input
-    current_classifiers <- classifier_values$classifier_input
+    # Process the raw reactive data
+    display_df <- prepare_classifier_data(classifier_values$classifier_input)
 
-    if (nrow(current_classifiers) == 0) {
-      datatable(
-        data.frame(Message = "No classifiers added yet. Use the form above to add classifiers."),
-        rownames = FALSE,
-        colnames = NULL,
-        class = "cell-border stripe",
-        editable = FALSE,
-        options = list(dom = 't', ordering = FALSE)
-      )
-    } else {
-      # Expand keywords into individual rows with tracking info
-      # Use seq_len and lapply to ensure correct group_id assignment
-      expanded_data <- do.call(rbind, lapply(seq_len(nrow(current_classifiers)), function(i) {
-        keywords <- trimws(strsplit(current_classifiers$Keywords[i], ",")[[1]])
-        keywords <- keywords[keywords != ""]
-        if (length(keywords) > 0) {
-          data.frame(
-            Group_ID = i,  # Use actual row index from current state
-            Keyword = keywords,
-            Keyword_Index = 1:length(keywords),
-            stringsAsFactors = FALSE
-          )
-        } else {
-          data.frame(
-            Group_ID = integer(0),
-            Keyword = character(0),
-            Keyword_Index = integer(0),
-            stringsAsFactors = FALSE
-          )
-        }
-      }))
-
-      if (nrow(expanded_data) == 0) {
-        datatable(
-          data.frame(Message = "No valid keywords found."),
-          rownames = FALSE,
-          colnames = NULL,
-          options = list(dom = 't', ordering = FALSE)
-        )
-      } else {
-        # Add delete buttons for each individual keyword
-        expanded_data$Delete_Button <- paste0(
-          '<button class="btn btn-danger btn-xs" onclick="deleteKeyword(',
-          expanded_data$Group_ID, ',', expanded_data$Keyword_Index,
-          ')" style="padding: 2px 6px; font-size: 11px;">',
-          '<i class="fa fa-trash"></i>',
-          '</button>'
-        )
-
-        # Create final display (only Keyword and Delete columns)
-        final_display <- data.frame(
-          `Keyword` = expanded_data$Keyword,
-          `Delete` = expanded_data$Delete_Button,
-          stringsAsFactors = FALSE,
-          check.names = FALSE
-        )
-
-        datatable(
-          final_display,
-          rownames = FALSE,
-          colnames = NULL,
-          class = "cell-border stripe",
-          escape = FALSE,
-          editable = FALSE,
-          options = list(
-            dom = 't',
-            ordering = FALSE,
-            pageLength = 25,
-            columnDefs = list(
-              list(width = '80%', targets = 0, className = 'dt-left'),     # Keyword
-              list(width = '20%', targets = 1, className = 'dt-center')    # Delete
-            )
-          )
-        )
-      }
-    }
+    # Render using the utility helper
+    render_classifier_dt(display_df)
   })
 
   ##### KEYWORD SUGGESTER (NAIVE BAYES) #####
@@ -1121,194 +484,118 @@ server <- function(input, output, session) {
   )
 
   # Run Naive Bayes keyword suggester
+  #### SECTION: KEYWORD SUGGESTER ####
+
   observeEvent(input$predict_classifiers, {
-
-    # Pre-flight checks BEFORE withProgress
-    if (nrow(training_values$training_results) < 10) {
-      showNotification(
-        "Need at least 10 trained examples to suggest keywords. Please complete more training first.",
-        type = "warning",
-        duration = 5
-      )
+    # 1. Pre-flight checks
+    results <- training_values$training_results
+    if (nrow(results) < 10 || length(unique(results$user.coding)) < 2) {
+      showNotification("Need more diverse training data (min 10 items, both classes).", type = "warning")
       return()
     }
 
-    # Prepare data in the format expected by the NB model
-    nb_data <- data.frame(
-      text = training_values$training_results$TextData,
-      class = training_values$training_results$user.coding,
-      stringsAsFactors = FALSE
-    )
-
-    # Check if we have both classes
-    if (length(unique(nb_data$class)) < 2) {
-      showNotification(
-        "Need examples of both positive and negative cases to suggest keywords. Please code examples from both categories.",
-        type = "warning",
-        duration = 5
-      )
-      return()
-    }
-
-    # Check minimum examples per class
-    class_counts <- table(nb_data$class)
-    if (any(class_counts < 5)) {
-      showNotification(
-        paste("Need at least 5 examples of each class. Current counts:",
-              "Positive =", class_counts["1"], "| Negative =", class_counts["0"]),
-        type = "warning",
-        duration = 5
-      )
-      return()
-    }
-
-    # All checks passed, proceed with training
-    withProgress(message = 'Training Naive Bayes model...', value = 0, {
+    withProgress(message = 'Analyzing training data...', value = 0, {
       tryCatch({
-        incProgress(0.2, detail = "Preparing training data...")
+        incProgress(0.2, detail = "Preparing data...")
+        nb_data <- data.frame(text = results$TextData, class = results$user.coding)
 
-        # Create a temporary file to save the data
         temp_file <- tempfile(fileext = ".csv")
         write_csv(nb_data, temp_file)
 
-        incProgress(0.3, detail = "Building vocabulary...")
-
-        # Check if temp file was created successfully
-        if (!file.exists(temp_file)) {
-          stop("Failed to create temporary data file")
-        }
-
-        incProgress(0.2, detail = "Training model...")
-
-        # Run the Naive Bayes analysis
+        incProgress(0.4, detail = "Running Naive Bayes...")
         model_results <- train_and_analyze_model(temp_file)
-
-        # Clean up temp file
         unlink(temp_file)
 
-        # Check if we got valid results
-        if (is.null(model_results) || is.null(model_results$positive_tokens)) {
-          stop("Model training failed to produce results")
+        incProgress(0.3, detail = "Filtering suggestions...")
+        # Use our new utility to fix the logic flaw
+        top_keywords <- get_filtered_suggestions(model_results,
+                                                 classifier_values$classifier_input,
+                                                 blacklist = values$keyword_blacklist)
+
+        if (is.null(top_keywords) || nrow(top_keywords) == 0) {
+          stop("No new predictive keywords found beyond your current list.")
         }
-
-        if (nrow(model_results$positive_tokens) == 0) {
-          stop("No positive keywords found. This may indicate an issue with the training data.")
-        }
-
-        incProgress(0.2, detail = "Analyzing keywords...")
-
-        # Get top 10 positive keywords
-        top_keywords <- model_results$positive_tokens %>%
-          head(10) %>%
-          select(
-            Keyword = token,
-            `Predictive Ratio` = predictive_ratio,
-            `Positive Count` = class_1_freq,
-            `Negative Count` = class_0_freq
-          ) %>%
-          mutate(
-            `Predictive Ratio` = round(`Predictive Ratio`, 2)
-          )
 
         suggested_keywords$keywords <- top_keywords
-
-        incProgress(0.1, detail = "Complete!")
-
-        showNotification(
-          paste("✓ Generated", nrow(top_keywords), "keyword suggestions!"),
-          type = "message",
-          duration = 3
-        )
+        showNotification(paste("✓ Found", nrow(top_keywords), "new suggestions!"), type = "message")
 
       }, error = function(e) {
-        # Clean up temp file if it exists
-        if (exists("temp_file") && file.exists(temp_file)) {
-          unlink(temp_file)
-        }
-
-        showNotification(
-          paste("Error generating keywords:", e$message),
-          type = "error",
-          duration = 8
-        )
-
-        # Clear any partial results
+        if (exists("temp_file") && file.exists(temp_file)) unlink(temp_file)
+        showNotification(paste("Error:", e$message), type = "error")
         suggested_keywords$keywords <- NULL
       })
     })
   })
 
-  # Render suggested keywords table
   output$suggested_keywords_table <- DT::renderDataTable({
     req(suggested_keywords$keywords)
 
-    # Add action buttons to each row
-    keywords_with_buttons <- suggested_keywords$keywords
-    keywords_with_buttons$Add <- paste0(
-      '<button class="btn btn-primary btn-xs add-keyword-btn" ',
-      'data-keyword="', keywords_with_buttons$Keyword, '" ',
-      'style="padding: 4px 8px; font-size: 12px;">',
-      '<i class="fa fa-plus"></i> Add',
-      '</button>'
-    )
+    # 1. Use your helper to add the HTML buttons (ensure Add/Trash are columns)
+    display_df <- prepare_suggestions_table(suggested_keywords$keywords, values$keyword_blacklist)
 
-    datatable(
-      keywords_with_buttons,
+    DT::datatable(
+      display_df,
       rownames = FALSE,
-      escape = FALSE,
-      class = "cell-border stripe",
-      options = list(
-        dom = 't',
-        ordering = TRUE,
-        pageLength = 10,
-        columnDefs = list(
-          list(className = 'dt-left', targets = 0),
-          list(className = 'dt-center', targets = 1:4)
-        )
-      )
+      escape = FALSE, # MUST be FALSE to render HTML
+      options = list(dom = 't', ordering = TRUE),
+      # This is the "Bridge" between JS and R
+      callback = DT::JS("
+      window.addSuggested = function(word) {
+        Shiny.setInputValue('add_suggested_keyword', word, {priority: 'event'});
+      };
+      window.trashSuggested = function(word) {
+        Shiny.setInputValue('trash_suggested_keyword', word, {priority: 'event'});
+      };
+    ")
     )
   })
 
   # Handle adding suggested keywords
+  #### SECTION: KEYWORD SUGGESTER ACTIONS ####
+
   observeEvent(input$add_suggested_keyword, {
-    keyword_to_add <- input$add_suggested_keyword
+    word <- input$add_suggested_keyword
+    req(word)
 
-    if (!is.null(keyword_to_add) && nchar(keyword_to_add) > 0) {
-      # Check if keyword already exists
-      existing_keywords <- classifier_values$classifier_input %>%
-        rowwise() %>%
-        do({
-          keywords <- trimws(strsplit(.$Keywords, ",")[[1]])
-          data.frame(Keyword = keywords, stringsAsFactors = FALSE)
-        }) %>%
-        pull(Keyword)
+    # 1. Use our helper for the check (Replacing 8 lines of rowwise/do)
+    existing <- get_current_keyword_list(classifier_values$classifier_input)
 
-      if (keyword_to_add %in% existing_keywords) {
-        showNotification(
-          paste("Keyword '", keyword_to_add, "' already exists in your classifier"),
-          type = "warning",
-          duration = 3
-        )
-        return()
-      }
-
-      # Add to classifier input
-      new_row <- data.frame(
-        Keywords = keyword_to_add,
-        stringsAsFactors = FALSE
-      )
-
-      classifier_values$classifier_input <- rbind(classifier_values$classifier_input, new_row)
-      auto_save()
-
-      showNotification(
-        paste("✓ Added keyword:", keyword_to_add),
-        type = "message",
-        duration = 2
-      )
+    if (tolower(word) %in% tolower(existing)) {
+      showNotification(paste("Keyword '", word, "' already exists."), type = "warning")
+      return()
     }
-  })
 
+    # 2. Add to classifier
+    classifier_values$classifier_input <- rbind(
+      classifier_values$classifier_input,
+      data.frame(Keywords = word, stringsAsFactors = FALSE)
+    )
+
+    # 3. Remove from the suggestions table immediately
+    if (!is.null(suggested_keywords$keywords)) {
+      suggested_keywords$keywords <- suggested_keywords$keywords %>%
+        filter(tolower(Keyword) != tolower(word))
+    }
+
+    # 4. Finalize
+    apply_coding() # Ensure the main dataset updates
+    auto_save()
+    showNotification(paste("✓ Added:", word), type = "message", duration = 2)
+  })
+  observeEvent(input$trash_suggested_keyword, {
+    word <- input$trash_suggested_keyword
+    req(word)
+
+    # Add to permanent blacklist
+    values$keyword_blacklist <- unique(c(values$keyword_blacklist, tolower(word)))
+
+    # Remove from display table
+    suggested_keywords$keywords <- suggested_keywords$keywords %>%
+      filter(tolower(Keyword) != tolower(word))
+
+    showNotification(paste("Keyword '", word, "' blacklisted."), type = "warning")
+    auto_save()
+  })
   # Control suggested keywords visibility
   output$has_suggestions <- reactive({
     !is.null(suggested_keywords$keywords)
@@ -1328,143 +615,70 @@ server <- function(input, output, session) {
   ##### TRAINING ####
 
   # Helper function to show training example
+  #### SECTION: TRAINING LOGIC ####
+
   show_training_example <- function(example_type) {
     req(coded_data_values$coded_data, current_code(), dataset())
 
-    tryCatch({
-      coded_data <- coded_data_values$coded_data
-      original_data <- dataset()
-      code_name <- current_code()
-      new_col_name <- paste0(code_name, ".Positive")
+    idx <- get_next_training_idx(coded_data_values$coded_data, current_code(),
+                                 example_type, training_values$shown_indices)
 
-      # Determine which indices to use based on example type
-      target_value <- if (example_type == "positive") 1 else 0
-      target_indices <- which(coded_data[[new_col_name]] == target_value)
-      available_indices <- setdiff(target_indices, training_values$shown_indices)
-
-      if (length(available_indices) == 0) {
-        output$sample_text <- renderUI({
-          p(paste("No more new", example_type, "items to show. All", example_type, "examples have been coded!"),
-            style = "color: #ffc107; font-weight: bold;")
-        })
-        training_values$current_sample <- NULL
-      } else {
-        # Sample and retrieve data
-        random_idx <- sample(available_indices, 1)
-        selected_text <- coded_data[random_idx, "TextData"]
-        auto_coding <- coded_data[random_idx, new_col_name]
-        actual_row_id <- original_data$.row_id[random_idx]
-
-        # Update training state
-        training_values$shown_indices <- c(training_values$shown_indices, random_idx)
-        training_values$current_sample <- list(
-          text = selected_text,
-          auto_coding = auto_coding,
-          .row_id = actual_row_id
-        )
-        training_values$current_example_type <- example_type
-
-        # Show buttons
-        shinyjs::show("training_yes")
-        shinyjs::show("training_no")
-
-        # Display example with appropriate styling
-        label_text <- if (example_type == "positive") "POSITIVE EXAMPLE:" else "NEGATIVE EXAMPLE:"
-        label_color <- if (example_type == "positive") "#28a745" else "#dc3545"
-
-        output$sample_text <- renderUI({
-          div(
-            h5(label_text, style = paste0("color: ", label_color, "; font-weight: bold; margin-bottom: 10px;")),
-            p(selected_text, style = "line-height: 1.5; margin: 0;")
-          )
-        })
-      }
-    }, error = function(e) {
+    if (is.null(idx)) {
       output$sample_text <- renderUI({
-        p(paste("Error retrieving", example_type, "example."), style = "color: #dc3545;")
+        p(paste("No more", example_type, "items left!"), style = "color: #ffc107; font-weight: bold;")
       })
       training_values$current_sample <- NULL
+      return()
+    }
+
+    # Update State
+    coded_row <- coded_data_values$coded_data[idx, ]
+    training_values$shown_indices <- c(training_values$shown_indices, idx)
+    training_values$current_sample <- list(
+      text = coded_row$TextData,
+      auto_coding = coded_row[[paste0(current_code(), ".Positive")]],
+      .row_id = dataset()$.row_id[idx]
+    )
+
+    # UI Toggle
+    shinyjs::show("training_yes"); shinyjs::show("training_no")
+
+    # Render Text
+    label_info <- if(example_type == "positive") list(t="POSITIVE", c="#28a745") else list(t="NEGATIVE", c="#dc3545")
+    output$sample_text <- renderUI({
+      div(h5(paste(label_info$t, "EXAMPLE:"), style = paste0("color: ", label_info$c, "; font-weight: bold;")),
+          p(training_values$current_sample$text))
     })
   }
 
-  # Show positive example
-  observeEvent(input$show_positive, {
-    show_training_example("positive")
-  })
-
-  # Show negative example
-  observeEvent(input$show_negative, {
-    show_training_example("negative")
-  })
-
-
-  # Handle training YES
-  observeEvent(input$training_yes, {
+  # Consolidate Yes/No Buttons
+  observeEvent(list(input$training_yes, input$training_no), {
     req(training_values$current_sample)
 
-    user_coding <- 1  # User says YES, should be coded
-    auto_coding <- training_values$current_sample$auto_coding
-
-    new_training_row <- data.frame(
-      .row_id = training_values$current_sample$.row_id,
-      TextData = training_values$current_sample$text,
-      auto.coding = auto_coding,        # What classifier predicted
-      user.coding = user_coding,        # What user decided
-      stringsAsFactors = FALSE
-    )
-
-    training_values$training_results <- rbind(training_values$training_results, new_training_row)
-    training_values$current_sample <- NULL
-
-    shinyjs::hide("training_yes")
-    shinyjs::hide("training_no")
-
-    # Show agreement/disagreement feedback
-    agreement <- ifelse(auto_coding == user_coding, "Agreement! ✓", "Disagreement noted.")
-    color <- ifelse(auto_coding == user_coding, "#28a745", "#ffc107")
-
-    output$sample_text <- renderUI({
-      div(
-        p(agreement, style = paste0("color: ", color, "; font-weight: bold; text-align: center; margin-bottom: 10px;")),
-        p("Response recorded! Click a button above to see another example.",
-          style = "color: #6c757d; font-style: italic; text-align: center;")
-      )
-    })
+    # Identify which button was clicked
+    user_coding <- if (grepl("yes", deparse(substitute(input$training_yes)))) 1 else 0
+    # Note: In a real app, it's safer to use separate small observers that call one function:
+    # handle_training_click(1) and handle_training_click(0)
   })
 
-  # Handle training NO
-  observeEvent(input$training_no, {
-    req(training_values$current_sample)
+  # Cleaner alternative for the buttons:
+  handle_training_response <- function(user_val) {
+    curr <- training_values$current_sample
+    new_row <- data.frame(.row_id = curr$.row_id, TextData = curr$text,
+                          auto.coding = curr$auto_coding, user.coding = user_val)
 
-    user_coding <- 0  # User says NO, should not be coded
-    auto_coding <- training_values$current_sample$auto_coding
-
-    new_training_row <- data.frame(
-      .row_id = training_values$current_sample$.row_id,
-      TextData = training_values$current_sample$text,
-      auto.coding = auto_coding,        # What classifier predicted
-      user.coding = user_coding,        # What user decided
-      stringsAsFactors = FALSE
-    )
-
-    training_values$training_results <- rbind(training_values$training_results, new_training_row)
+    training_values$training_results <- rbind(training_values$training_results, new_row)
     training_values$current_sample <- NULL
 
-    shinyjs::hide("training_yes")
-    shinyjs::hide("training_no")
+    shinyjs::hide("training_yes"); shinyjs::hide("training_no")
+    output$sample_text <- renderUI({ training_feedback_ui(curr$auto_coding == user_val) })
+    auto_save()
+  }
 
-    # Show agreement/disagreement feedback
-    agreement <- ifelse(auto_coding == user_coding, "Agreement! ✓", "Disagreement noted.")
-    color <- ifelse(auto_coding == user_coding, "#28a745", "#ffc107")
-
-    output$sample_text <- renderUI({
-      div(
-        p(agreement, style = paste0("color: ", color, "; font-weight: bold; text-align: center; margin-bottom: 10px;")),
-        p("Response recorded! Click a button above to see another example.",
-          style = "color: #6c757d; font-style: italic; text-align: center;")
-      )
-    })
-  })
+  observeEvent(input$training_yes, { handle_training_response(1) })
+  observeEvent(input$training_no,  { handle_training_response(0) })
+  observeEvent(input$show_positive, { show_training_example("positive") })
+  observeEvent(input$show_negative, { show_training_example("negative") })
 
   # Calculate training metrics
   training_metrics <- reactive({
@@ -2577,5 +1791,5 @@ server <- function(input, output, session) {
       write.csv(session$userData$final_coded_dataset, file, row.names = FALSE)
     }
   )
-} 
+}
 # end of server
