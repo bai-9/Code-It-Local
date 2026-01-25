@@ -60,6 +60,7 @@ server <- function(input, output, session) {
   mod_project_server("project_1", state, parent_session = session)
   mod_classifier_server("classifier_1", state, parent_session = session)
   mod_training_server("training_1", state, parent_session = session)
+  mod_review_server("review_1", state, parent_session = session)
   mod_validation_server("validation_1", state, parent_session = session)
   mod_download_server("download_1", state)
 

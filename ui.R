@@ -41,16 +41,20 @@ ui <- navbarPage(
   tabPanel("Training", icon = icon("graduation-cap"), value = "training",
            mod_training_ui("training_1")),
 
-  # 4. Validation
+  # 4. Review
+  tabPanel("Review", icon = icon("magnifying-glass"), value = "review",
+           mod_review_ui("review_1")),
+
+  # 5. Validation
   tabPanel("Validation", icon = icon("medal"), value = "validation",
            mod_validation_ui("validation_1")),
 
-  # 5. Finalize
+  # 6. Finalize
   tabPanel("Download", icon = icon("download"), value = "download",
            mod_download_ui("download_1")),
 
-  # 6. About
-  tabPanel(title = "Help", icon = icon("question-circle"), value = "about",
+  # 7. About
+  tabPanel(title = "About", icon = icon("question-circle"), value = "about",
            h2("Code It"),
            p("This tool allows you to train and validate keyword-based classifiers using Perfect Sampling logic."))
 )

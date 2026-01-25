@@ -51,3 +51,7 @@ rsconnect/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# test data
+tmp/user_data/local_user/*.*
+tmp/user_data/*.*

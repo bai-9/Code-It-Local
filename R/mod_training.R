@@ -44,7 +44,7 @@ mod_training_ui <- function(id) {
       column(6, actionButton(ns("prev_tab"), "← Back to Classifiers", class = "btn-secondary")),
       column(6, div(align = "right",
                     shinyjs::disabled(
-                      actionButton(ns("next_tab"), "Go to Validation →", class = "btn-primary")
+                      actionButton(ns("next_tab"), "Go to Review →", class = "btn-primary")
                     )))
     )
   )
@@ -207,9 +207,7 @@ mod_training_server <- function(id, state, parent_session) {
     # 8. Navigation
     # Inside mod_classifier_server
     observe({
-      kw_list <- state$classifiers$Keywords
-      is_ready <- !is.null(kw_list) && length(kw_list) > 0 && any(kw_list != "")
-
+      is_ready <- nrow(state$training_results) > 0
       # 1. Handle the "Next" button within the module
       if (is_ready) {
         shinyjs::enable("next_tab")
@@ -220,14 +218,14 @@ mod_training_server <- function(id, state, parent_session) {
       # 2. Handle the Tab in the Top Navbar
       # We use shinyjs::runjs to target the CSS selector of the tab link
       if (is_ready) {
-        shinyjs::runjs("$('#tabs li a[data-value=\"validation\"]').removeClass('disabled').css('pointer-events', 'auto').css('opacity', '1');")
+        shinyjs::runjs("$('#tabs li a[data-value=\"review\"]').removeClass('disabled').css('pointer-events', 'auto').css('opacity', '1');")
       } else {
         # We add a 'disabled' class and stop pointer events (clicks)
-        shinyjs::runjs("$('#tabs li a[data-value=\"validation\"]').addClass('disabled').css('pointer-events', 'none').css('opacity', '0.5');")
+        shinyjs::runjs("$('#tabs li a[data-value=\"review\"]').addClass('disabled').css('pointer-events', 'none').css('opacity', '0.5');")
       }
     })
     observeEvent(input$next_tab, {
-      updateNavbarPage(parent_session, "tabs", selected = "validation")
+      updateNavbarPage(parent_session, "tabs", selected = "review")
     })
 
     observeEvent(input$prev_tab, {
