@@ -23,7 +23,9 @@ mod_review_ui <- function(id) {
                             inline = TRUE),
                br(),
                div(id = ns("text_viewer_container"),
-                   verbatimTextOutput(ns("full_text_display"), placeholder = TRUE)
+                   h5(icon("eye"), "Full Text Viewer"),
+                   # htmlOutput allows for better styling than verbatimTextOutput
+                   htmlOutput(ns("full_text_display"))
                ),
                br(),
                DT::DTOutput(ns("review_table"))
@@ -192,15 +194,19 @@ mod_review_server <- function(id, state, parent_session) {
 
     # --- 4. FULL TEXT VIEWER ---
 
-    output$full_text_display <- renderText({
+    output$full_text_display <- renderUI({
       s <- input$review_table_rows_selected
       df <- processed_data()
 
       if (length(s) == 0 || nrow(df) == 0) {
-        return("Click a row in the table above to view the full text content.")
+        return(tags$i("Click a row in the table above to view the full text content."))
       }
 
-      df$TextData[s]
+      # Get the text for the selected row
+      full_text <- df$TextData[s]
+
+      # Return the text wrapped in a tag
+      tags$div(full_text)
     })
 
     # --- 5. NAVIGATION ---

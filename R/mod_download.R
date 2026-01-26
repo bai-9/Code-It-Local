@@ -7,7 +7,7 @@ mod_download_ui <- function(id) {
         uiOutput(ns("download_keywords_ui")) # Dynamic UI
       )),
       column(4, wellPanel(
-        h4("2. Training/Gold Standard"),
+        h4("2. Training"),
         uiOutput(ns("download_training_ui")) # Dynamic UI
       )),
       column(4, wellPanel(

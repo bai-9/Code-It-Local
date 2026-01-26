@@ -179,13 +179,13 @@ train_and_analyze_model <- function(training_filepath) {
   # 6. Get Top Tokens
   class_1_tokens <- token_analysis %>%
     arrange(desc(predictive_ratio)) %>%
-    filter(predictive_ratio > 1) %>%
-    head(20)
+    filter(predictive_ratio > 1) #%>%
+    #head(20)
 
   class_0_tokens <- token_analysis %>%
     arrange(predictive_ratio) %>%
-    filter(predictive_ratio < 1) %>%
-    head(20)
+    filter(predictive_ratio < 1) #%>%
+    #head(20)
 
   # 7. Return all useful objects
   return(list(

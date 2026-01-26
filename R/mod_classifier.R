@@ -97,7 +97,7 @@ mod_classifier_server <- function(id, state, parent_session) {
 
       df <- data.frame(
         Keyword = raw_df[[kw_col]],
-        Frequency = raw_df[[freq_col]],
+        Weight = round(raw_df[[freq_col]],4),
         stringsAsFactors = FALSE
       )
 
