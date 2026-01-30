@@ -16,7 +16,7 @@ validation_box_ui <- function(text) {
 # utils.R
 
 #' Core Statistical Logic for Cai's N
-calculate_cais_n_logic <- function(base_rate, previously_coded, data_size, alpha = 0.025) {
+calculate_cais_n_logic <- function(base_rate, previously_coded, data_size, kappa_threshold,alpha = 0.025) {
   # Adjustment for base rate
   b1_hat <- base_rate
   if (base_rate > 0.01 && base_rate < 0.99 && previously_coded > 10) {
@@ -25,7 +25,7 @@ calculate_cais_n_logic <- function(base_rate, previously_coded, data_size, alpha
     b1_hat <- max(0.05, min(0.95, base_rate - (z_score * se)))
   }
 
-  a_max <- max_accuracy(b1_hat, 0.80)
+  a_max <- max_accuracy(b1_hat, kappa_threshold)
   if (a_max <= 0.5 || a_max >= 1) return(list(n = Inf, a_max = a_max, b1 = b1_hat))
 
   cais_n <- ceiling(log(alpha) / log(a_max))

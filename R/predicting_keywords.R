@@ -88,56 +88,42 @@ train_naive_bayes <- function(dtm_df) {
 #' @param dtm A document-term matrix.
 #' @return A dataframe with token statistics.
 analyze_token_importance <- function(data, dtm) {
-  # Get token frequencies by class
   tokens <- as.data.frame(as.matrix(dtm))
   tokens$class <- data$class
-
-  # Calculate token statistics for each class
   token_stats <- data.frame()
-
-  # Get all token names (except the 'class' column)
   token_names <- colnames(tokens)[colnames(tokens) != "class"]
 
-  # Ensure there are tokens to analyze
-  if (length(token_names) == 0) {
-    warning("No tokens found to analyze.")
-    return(data.frame())
-  }
+  if (length(token_names) == 0) return(data.frame())
 
   for (token in token_names) {
-    # Need to handle potential invalid column names if not sanitized
     safe_token <- make.names(token)
-    if (!safe_token %in% colnames(tokens)) next # Skip if token name is problematic
+    if (!safe_token %in% colnames(tokens)) next
 
     class_1_freq <- sum(tokens[tokens$class == 1, safe_token])
     class_0_freq <- sum(tokens[tokens$class == 0, safe_token])
 
+    # NEW: Total Frequency across all documents
+    total_freq <- class_1_freq + class_0_freq
+
     class_1_docs <- sum(tokens[tokens$class == 1, safe_token] > 0)
     class_0_docs <- sum(tokens[tokens$class == 0, safe_token] > 0)
 
-    total_1 <- sum(tokens$class == 1)
-    total_0 <- sum(tokens$class == 0)
-
-    # Avoid division by zero if a class has 0 documents
-    if (total_1 == 0) total_1 <- 1e-6
-    if (total_0 == 0) total_0 <- 1e-6
+    total_1 <- max(sum(tokens$class == 1), 1e-6)
+    total_0 <- max(sum(tokens$class == 0), 1e-6)
 
     class_1_pct <- class_1_docs / total_1
     class_0_pct <- class_0_docs / total_0
 
-    # Add a small epsilon to denominator to avoid division by zero
+    # Predictive ratio calculation
     predictive_ratio <- (class_1_pct + 0.01) / (class_0_pct + 0.01)
 
     token_stats <- rbind(token_stats, data.frame(
       token = token,
-      class_1_freq = class_1_freq,
-      class_0_freq = class_0_freq,
-      class_1_pct = class_1_pct,
-      class_0_pct = class_0_pct,
-      predictive_ratio = predictive_ratio
+      total_freq = total_freq, # Added for your Frequency column
+      predictive_ratio = predictive_ratio,
+      stringsAsFactors = FALSE
     ))
   }
-
   return(token_stats)
 }
 
@@ -282,39 +268,55 @@ predict_new_text <- function(model_object, new_text_vector) {
   # return(prediction)
 }
 
-# utils.R
 
 #' Process Naive Bayes results and filter out existing keywords
 #' Enhanced filtering for suggestions
 #' @param model_results Output from the NB model
 #' @param existing_df The current classifier_input
 #' @param blacklist Vector of strings the user has "trashed"
-get_filtered_suggestions <- function(model_results, existing_df, blacklist) {
+get_filtered_suggestions <- function(model_results, existing_df, penalty_df = NULL) {
   if (is.null(model_results$positive_tokens)) return(NULL)
 
-  # 1. Clean existing keywords
+  # 1. Standardize existing keywords
   existing <- existing_df$Keywords %>%
     lapply(function(x) trimws(strsplit(x, ",")[[1]])) %>%
     unlist() %>% tolower() %>% unique()
 
-  # 2. Filter out Existing + Blacklist
+  # 2. Process tokens and apply penalty
   suggestions <- model_results$positive_tokens %>%
     mutate(token_lower = tolower(token)) %>%
-    filter(!token_lower %in% existing) %>%
-    filter(!token_lower %in% blacklist) %>%
-    head(10)
+    filter(!token_lower %in% existing)
 
-  if (nrow(suggestions) == 0) return(NULL)
+  # 3. Apply Soft Penalty Logic
+  if (!is.null(penalty_df) && nrow(penalty_df) > 0) {
+    # Match against the Word column in your state$panelty
+    penalty_lookup <- penalty_df %>%
+      mutate(Word = tolower(Word)) %>%
+      select(Word, penalty_val = value)
 
-  # 3. Add the Trash Button Column
-  suggestions$Remove <- sprintf(
-    '<button class="btn btn-default btn-xs" onclick="trashSuggestion(\'%s\')" style="color: #dc3545;"><i class="fa fa-trash"></i></button>',
-    suggestions$token
-  )
+    suggestions <- suggestions %>%
+      left_join(penalty_lookup, by = c("token_lower" = "Word")) %>%
+      mutate(penalty_val = ifelse(is.na(penalty_val), 1.0, penalty_val)) %>%
+      # Apply the penalty multiplier to the Weight
+      mutate(weighted_ratio = predictive_ratio * penalty_val)
+  } else {
+    suggestions <- suggestions %>% mutate(weighted_ratio = predictive_ratio)
+  }
 
-  return(suggestions %>% select(Keyword = token, `Ratio` = predictive_ratio, Remove))
+  # 4. Filter and Format for UI
+  final_df <- suggestions %>%
+    arrange(desc(weighted_ratio)) %>%
+    head(10) %>%
+    select(
+      Keyword = token,
+      Weight = weighted_ratio,
+      Frequency = total_freq # Pulled from the updated analyze function
+    )
+
+  if (nrow(final_df) == 0) return(NULL)
+
+  return(final_df)
 }
-# utils.R
 
 #' Get a flat vector of all unique keywords currently in the classifier
 get_current_keyword_list <- function(classifier_df) {
@@ -325,3 +327,4 @@ get_current_keyword_list <- function(classifier_df) {
     unlist() %>%
     unique()
 }
+

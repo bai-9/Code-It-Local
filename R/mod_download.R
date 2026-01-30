@@ -2,17 +2,22 @@ mod_download_ui <- function(id) {
   ns <- NS(id)
   tagList(
     fluidRow(
-      column(4, wellPanel(
+      column(3, wellPanel(
         h4("1. Classifier Keywords"),
-        uiOutput(ns("download_keywords_ui")) # Dynamic UI
+        uiOutput(ns("download_keywords_ui"))
       )),
-      column(4, wellPanel(
-        h4("2. Training"),
-        uiOutput(ns("download_training_ui")) # Dynamic UI
+      column(3, wellPanel(
+        h4("2. Training Data"),
+        uiOutput(ns("download_training_ui"))
       )),
-      column(4, wellPanel(
-        h4("3. Validated Results Package"),
-        uiOutput(ns("full_data_ui"))         # Dynamic UI
+      column(3, wellPanel(
+        h4("3. Fully Coded Data"),
+        uiOutput(ns("download_coded_ui")),
+        helpText("Apply keywords to the entire dataset.")
+      )),
+      column(3, wellPanel(
+        h4("4. Validated Package"),
+        uiOutput(ns("full_data_ui"))
       ))
     ),
     hr(),
@@ -20,24 +25,21 @@ mod_download_ui <- function(id) {
   )
 }
 
-mod_download_server <- function(id, state) {
+mod_download_server <- function(id, state, parent_session) { # Added parent_session for navigation
   moduleServer(id, function(input, output, session) {
     ns <- session$ns
-    ns <- session$ns
 
-    # --- 1. Keywords Download (Conditional) ---
+    # --- 1. Keywords UI ---
     output$download_keywords_ui <- renderUI({
       clf <- state$classifiers$Keywords
-      valid_kw <- clf[clf != "" & !is.na(clf)]
-
-      if (length(valid_kw) == 0) {
-        actionButton(ns("kw_disabled"), "No Keywords Found", icon = icon("ban"), class = "btn-secondary disabled")
+      if (is.null(clf) || length(clf[clf != "" & !is.na(clf)]) == 0) {
+        actionButton(ns("kw_disabled"), "No Keywords", icon = icon("ban"), class = "btn-secondary disabled")
       } else {
         downloadButton(ns("download_keywords"), "Download CSV", class = "btn-info")
       }
     })
 
-    # --- 2. Training Data Download (Conditional) ---
+    # --- 2. Training UI ---
     output$download_training_ui <- renderUI({
       if (is.null(state$training_results) || nrow(state$training_results) == 0) {
         actionButton(ns("train_disabled"), "No Training Data", icon = icon("ban"), class = "btn-secondary disabled")
@@ -46,134 +48,92 @@ mod_download_server <- function(id, state) {
       }
     })
 
-    # --- 3. Full Data & Report Download (Conditional) ---
+    # --- 3. NEW: Coded Data UI (Unlocked once keywords exist) ---
+    output$download_coded_ui <- renderUI({
+      clf <- state$classifiers$Keywords
+      if (is.null(clf) || length(clf[clf != "" & !is.na(clf)]) == 0) {
+        actionButton(ns("coded_disabled"), "Keywords Required", icon = icon("lock"), class = "btn-secondary disabled")
+      } else {
+        downloadButton(ns("download_coded_only"), "Download Coded CSV", class = "btn-warning")
+      }
+    })
+
+    # --- 4. Validated Package UI ---
     output$full_data_ui <- renderUI({
       if (is.null(state$val_complete) || state$val_complete == FALSE) {
-        # Show a locked status
         tagList(
-          actionButton(ns("full_disabled"), "Validation Incomplete", icon = icon("lock"), class = "btn-secondary disabled"),
-          helpText("Requires a successful Perfect Sampling cycle.")
+          actionButton(ns("full_disabled"), "Locked", icon = icon("lock"), class = "btn-secondary disabled"),
+          helpText("Requires Validation cycle.")
         )
       } else {
-        downloadButton(ns("download_full"), "Download Validated Package", class = "btn-success")
+        downloadButton(ns("download_full"), "Download Zip", class = "btn-success")
       }
     })
-    # 1. Keywords Download
+
+    # --- DOWNLOAD HANDLERS ---
+
+    # 1. Keywords
     output$download_keywords <- downloadHandler(
       filename = function() { paste0("keywords_", Sys.Date(), ".csv") },
-      content = function(file) {
-        write.csv(state$classifiers, file, row.names = FALSE)
-      }
+      content = function(file) { write.csv(state$classifiers, file, row.names = FALSE) }
     )
 
-    # 2. Training Data Download
+    # 2. Training Data
     output$download_training <- downloadHandler(
       filename = function() { paste0("training_data_", Sys.Date(), ".csv") },
-      content = function(file) {
-        write.csv(state$training_results, file, row.names = FALSE)
-      }
+      content = function(file) { write.csv(state$training_results, file, row.names = FALSE) }
     )
 
-    # 3. Full Data Download (Conditional UI)
-    output$full_data_ui <- renderUI({
-      if (is.null(state$val_complete) || state$val_complete == FALSE) {
-        helpText("⚠️ Complete a validation cycle (Cai's N) to unlock full dataset export.")
-      } else {
-        downloadButton(ns("download_full"), "Download Full Results", class = "btn-success")
-      }
-    })
-
-    output$download_full <- downloadHandler(
-      filename = function() {
-        paste0("validated_results_", Sys.Date(), ".zip")
-      },
+    # 3. NEW: Coded Data Handler
+    output$download_coded_only <- downloadHandler(
+      filename = function() { paste0("coded_full_dataset_", Sys.Date(), ".csv") },
       content = function(file) {
-        # Create a temporary directory to store files
-        tmpdir <- tempdir()
-        setwd(tempdir())
-
-        # --- File 1: The Fully Coded CSV ---
         df <- state$dataset
         t_col <- state$text_column
         clf <- state$classifiers$Keywords
         pattern <- paste(clf[clf != "" & !is.na(clf)], collapse = "|")
 
+        # Apply coding logic
+        df$Predicted_Positive <- ifelse(grepl(pattern, df[[t_col]], ignore.case = TRUE, perl = TRUE), 1, 0)
+        write.csv(df, file, row.names = FALSE)
+      }
+    )
+
+    # 4. Full Validated Package (ZIP)
+    output$download_full <- downloadHandler(
+      filename = function() { paste0("validated_results_", Sys.Date(), ".zip") },
+      content = function(file) {
+        tmpdir <- tempdir()
+        orig_wd <- getwd()
+        setwd(tmpdir)
+        on.exit(setwd(orig_wd)) # Ensure we return to original WD
+
+        # Generate CSV
+        df <- state$dataset
+        t_col <- state$text_column
+        clf <- state$classifiers$Keywords
+        pattern <- paste(clf[clf != "" & !is.na(clf)], collapse = "|")
         df$Predicted_Positive <- ifelse(grepl(pattern, df[[t_col]], ignore.case = TRUE, perl = TRUE), 1, 0)
 
         data_file <- "coded_dataset.csv"
         write.csv(df, data_file, row.names = FALSE)
 
-        # --- File 2: The Validation Report (TXT) ---
+        # Generate Report
         report_file <- "validation_report.txt"
-        report_conn <- file(report_file)
-
         writeLines(c(
           "===========================================",
-          "     CAI'S N VALIDATION REPORT",
+          "      CAI'S N VALIDATION REPORT",
           "===========================================",
           paste("Date:", Sys.Date()),
-          paste("Project Code:", ifelse(is.null(state$current_code), "N/A", state$current_code)),
-          "",
-          "--- CLASSIFIER DETAILS ---",
-          paste("Keywords used:", paste(clf, collapse = ", ")),
-          paste("Target Text Column:", t_col),
-          "",
-          "--- STATISTICAL PARAMETERS ---",
-          paste("Target Kappa Threshold:", "0.80"),
-          paste("Alpha Level:", "0.025"),
-          paste("Observed Base Rate (b1):", round(state$val_b1_adj, 4)),
-          paste("Required Accuracy (a_max):", round(state$val_a_max, 4)),
-          paste("Calculated Cai's N:", state$val_cais_n),
-          "",
-          "--- RESULTS ---",
-          paste("Total Dataset Rows:", nrow(df)),
-          paste("Predicted Positive Cases:", sum(df$Predicted_Positive)),
-          paste("Validation Status:", "SUCCESS (Perfect Sampling Achieved)"),
-          "",
-          "Reference: Shaffer, D.W., & Cai, Z. (2012). Perfect Sampling.",
-          "==========================================="
-        ), report_conn)
-        close(report_conn)
+          paste("Validation Status: SUCCESS"),
+          paste("Cai's N:", state$val_cais_n)
+        ), report_file)
 
-        # --- Bundle into ZIP ---
         zip(zipfile = file, files = c(data_file, report_file), extras = "-j")
       }
     )
 
-    # 4. Metadata Table
-    output$meta_table <- renderTable({
-      data.frame(
-        "Metric" = c("Total Dataset Rows", "Training Items Coded", "Validation Cai's N", "Status"),
-        "Value" = c(
-          nrow(state$dataset),
-          nrow(state$training_results),
-          ifelse(is.null(state$val_cais_n), "Not Calculated", state$val_cais_n),
-          ifelse(state$val_complete, "Validated", "In Progress")
-        )
-      )
-    })
-
-    # 5. Navigation
-    observe({
-      kw_list <- state$classifiers$Keywords
-      is_ready <- !is.null(kw_list) && length(kw_list) > 0 && any(kw_list != "")
-
-      # 1. Handle the "Next" button within the module
-      if (is_ready) {
-        shinyjs::enable("prev_tab")
-      } else {
-        shinyjs::disable("prev_tab")
-      }
-
-      # 2. Handle the Tab in the Top Navbar
-      # We use shinyjs::runjs to target the CSS selector of the tab link
-      if (is_ready) {
-        shinyjs::runjs("$('#tabs li a[data-value=\"validation\"]').removeClass('disabled').css('pointer-events', 'auto').css('opacity', '1');")
-      } else {
-        # We add a 'disabled' class and stop pointer events (clicks)
-        shinyjs::runjs("$('#tabs li a[data-value=\"validation\"]').addClass('disabled').css('pointer-events', 'none').css('opacity', '0.5');")
-      }
-    })
+    # Navigation Logic
     observeEvent(input$prev_tab, {
       updateNavbarPage(parent_session, "tabs", selected = "validation")
     })

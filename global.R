@@ -7,6 +7,8 @@ library(shinythemes)
 library(bsicons)
 library(shinyjs)
 library(uuid) # Optional: run install.packages("uuid") for unique IDs
+library(fastTextR)
+library(stringr)
 
 base_dir <- "./tmp/user_data"
 
@@ -14,8 +16,8 @@ base_dir <- "./tmp/user_data"
 
 # Get the path to the registry
 get_registry_path <- function() {
-  dir.create("./tmp/user_data", recursive = TRUE, showWarnings = FALSE)
-  file.path("./tmp/user_data", "projects.rds")
+  dir.create("./tmp/user_data/local_user", recursive = TRUE, showWarnings = FALSE)
+  file.path("./tmp/user_data/local_user", "projects.rds")
 }
 
 # Load the project list
@@ -53,7 +55,6 @@ save_project_to_registry <- function(data_file, text_column, code_name, state_rd
   } else {
     # Create new entry
     new_id <- if(is.null(state_rds_name)) paste0("state_", format(Sys.time(), "%Y%m%d_%H%M%S"), ".rds") else state_rds_name
-
     new_row <- data.frame(
       project_id = as.character(nrow(registry) + 1),
       data_file = data_file,
@@ -63,6 +64,7 @@ save_project_to_registry <- function(data_file, text_column, code_name, state_rd
       last_modified = Sys.time(),
       stringsAsFactors = FALSE
     )
+
     registry <- rbind(registry, new_row)
     res <- new_id
   }

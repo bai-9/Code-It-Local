@@ -17,7 +17,7 @@ mod_training_ui <- function(id) {
       )),
       column(6, wellPanel(
         h4("Performance Metrics"),
-        tableOutput(ns("metrics_table"))
+        DT::dataTableOutput(ns("metrics_table"))
       ))
     ),
 
@@ -144,7 +144,7 @@ mod_training_server <- function(id, state, parent_session) {
 
     # 6. Confusion Matrix Rendering
     output$confusion_matrix <- DT::renderDataTable({
-      req(nrow(state$training_results) > 0)
+      req(nrow(state$training_results) >0)
 
       level_order <- c(1, 0)
       actual <- factor(state$training_results$user.coding, levels = level_order)
@@ -172,7 +172,7 @@ mod_training_server <- function(id, state, parent_session) {
     })
 
     # 7. Performance Metrics
-    output$metrics_table <- renderTable({
+    output$metrics_table <- DT::renderDataTable({ # CHANGED THIS FROM renderTable
       req(nrow(state$training_results) >= 5)
 
       actual <- state$training_results$user.coding
@@ -182,27 +182,75 @@ mod_training_server <- function(id, state, parent_session) {
 
       valid_keywords <- clf[[col_name]][!is.na(clf[[col_name]]) & clf[[col_name]] != ""]
       pattern <- paste(valid_keywords, collapse = "|")
+
+      # Prediction on training subset
       predicted <- if (pattern == "") rep(0, length(actual))
       else ifelse(grepl(pattern, state$training_results$TextData, ignore.case = TRUE, perl = TRUE), 1, 0)
 
+      # Confusion Matrix Elements
       tp <- sum(actual == 1 & predicted == 1)
       tn <- sum(actual == 0 & predicted == 0)
       fp <- sum(actual == 0 & predicted == 1)
       fn <- sum(actual == 1 & predicted == 0)
       total <- length(actual)
 
+      # Sample-based Metrics
       fdr <- if ((tp + fp) == 0) 0 else fp / (tp + fp)
       for_rate <- if ((tn + fn) == 0) 0 else fn / (tn + fn)
-
       po <- (tp + tn) / total
       pe <- (( (tp + fp)/total * (tp + fn)/total ) + ( (tn + fn)/total * (tn + fp)/total ))
       kappa <- if (pe == 1) 0 else (po - pe) / (1 - pe)
 
-      data.frame(
+      # --- START NEW LOGIC: True Value Estimation ---
+      N_total <- nrow(state$dataset)
+      full_matches <- grepl(pattern, state$dataset[[state$text_column]], ignore.case = TRUE, perl = TRUE)
+      b1 <- sum(full_matches) / N_total
+
+      # Call ps_estimates
+      est <- ps_estimates(tp, fp, fn, tn, b1, N_total)
+      # --- END NEW LOGIC ---
+
+      df = data.frame(
         Metric = c("False Discovery Rate", "False Omission Rate", "Cohen's Kappa"),
-        Value = c(paste0(round(fdr * 100, 1), "%"), paste0(round(for_rate * 100, 1), "%"), round(kappa, 3))
+        `Sample Value` = c(
+          paste0(round(fdr * 100, 2), "%"),
+          paste0(round(for_rate * 100, 2), "%"),
+          round(kappa, 3)
+        ),
+        `Estimated True Value` = c(
+          paste0(round(est$FDR * 100, 2), "%"),
+          paste0(round(est$FOR * 100, 2), "%"),
+          round(est$kappa, 2)
+        ),
+        check.names = FALSE
       )
-    }, striped = TRUE)
+
+      # Use DT to return the formatted table
+      DT::datatable(
+        df,
+        class = "cell-border",
+        options = list(
+          dom = "t",
+          ordering = FALSE,
+          rowCallback = JS(
+            "function(row, data) {
+         if (data[0] === \"Cohen's Kappa\") {
+           $('td', row).css({
+             'background-color': '#fff3cd',
+             'font-weight': 'bold',
+             'color': '#856404'
+           });
+         }
+       }"
+          ),
+          columnDefs = list(list(className = "dt-center", targets = "_all"))
+        ),
+        selection = "none",
+        rownames = FALSE
+      )
+
+
+    })
 
     # 8. Navigation
     # Inside mod_classifier_server

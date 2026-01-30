@@ -18,7 +18,7 @@
 }
 
 /* --- Editable Datatable Styling --- */
-.dataTables_wrapper .dataTable tbody td {
+.dataTables_wrapper .editable-table tbody td {
   padding: 12px 8px !important;
   border: 1px solid #dee2e6 !important;
   background-color: #ffffff !important;
@@ -26,14 +26,14 @@
 }
 
 /* Style for editable cells on hover */
-.dataTables_wrapper .dataTable tbody td:hover {
+.dataTables_wrapper .editable-table tbody td:hover {
   background-color: #e3f2fd !important;
   cursor: pointer !important;
   border: 1px solid #2196F3 !important;
 }
 
 /* --- DataTables Input Editing --- */
-.dataTables_wrapper .dataTable tbody td input {
+.dataTables_wrapper .editable-table tbody td input {
   width: 100% !important;
   padding: 8px 12px !important;
   border: 2px solid #007bff !important;
@@ -44,6 +44,14 @@
   box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25) !important;
   font-family: inherit !important;
   line-height: 1.5 !important;
+}
+.dataTables_wrapper .editable-table tbody td:nth-child(2) {
+  cursor: pointer;
+  font-weight: 600;
+  text-align: center;
+}
+.dataTables_wrapper .editable-table tbody td:nth-child(2):hover {
+  background-color: #e8f5e9 !important;
 }
 
 .dataTables_wrapper .dataTable tbody td input:focus {
@@ -101,3 +109,4 @@
   color: white;
   width: 100%;
 }
+
