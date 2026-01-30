@@ -72,8 +72,9 @@ server <- function(input, output, session) {
     state_list <- reactiveValuesToList(state)
 
     # Save to the specific path defined in global.R
-    save_path <- file.path("./tmp/user_data", state$current_state_file)
+    save_path <- file.path("./tmp/user_data/local_user", state$current_state_file)
     saveRDS(state_list, save_path)
+    cat("\n state saved!")
 
     # Optional: Log to console for debugging
     # print(paste("Autosaved project to:", state$current_state_file))

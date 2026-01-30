@@ -193,12 +193,12 @@ mod_training_server <- function(id, state, parent_session) {
       fp <- sum(actual == 0 & predicted == 1)
       fn <- sum(actual == 1 & predicted == 0)
       total <- length(actual)
-
+      n_sample = tp+fp+fn+tn
       # Sample-based Metrics
       fdr <- if ((tp + fp) == 0) 0 else fp / (tp + fp)
       for_rate <- if ((tn + fn) == 0) 0 else fn / (tn + fn)
-      po <- (tp + tn) / total
-      pe <- (( (tp + fp)/total * (tp + fn)/total ) + ( (tn + fn)/total * (tn + fp)/total ))
+      po <- (tp + tn) / n_sample
+      pe <- (( (tp + fp)/n_sample * (tp + fn)/n_sample ) + ( (tn + fn)/n_sample * (tn + fp)/n_sample ))
       kappa <- if (pe == 1) 0 else (po - pe) / (1 - pe)
 
       # --- START NEW LOGIC: True Value Estimation ---
@@ -248,8 +248,6 @@ mod_training_server <- function(id, state, parent_session) {
         selection = "none",
         rownames = FALSE
       )
-
-
     })
 
     # 8. Navigation
